@@ -681,11 +681,11 @@ static int usbasp_spi_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
 static int usbasp_spi_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
                               int page_size, int n_bytes)
 {
-  int n;
   unsigned char cmd[4];
-  int address = 0;
-  int wbytes = n_bytes;
-  int blocksize;
+  unsigned int addr;
+  unsigned int n;
+  int block_size;
+  int written;
   unsigned char * buffer = m->buf;
   unsigned char blockflags = USBASP_BLOCKFLAG_FIRST;
   int function;
@@ -703,25 +703,37 @@ static int usbasp_spi_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
 
   /* set blocksize depending on sck frequency */  
   if ((PDATA(pgm)->sckfreq_hz > 0) && (PDATA(pgm)->sckfreq_hz < 10000)) {
-     blocksize = USBASP_WRITEBLOCKSIZE / 10;
+     block_size = USBASP_WRITEBLOCKSIZE / 10;
   } else {
-     blocksize = USBASP_WRITEBLOCKSIZE;
+     block_size = USBASP_WRITEBLOCKSIZE;
   }
 
-  while (wbytes) {
-
-    if (wbytes <= blocksize) {
-      blocksize = wbytes;
-      blockflags |= USBASP_BLOCKFLAG_LAST;
+  if (n_bytes > m->size) {
+    n_bytes = m->size;
+    n = m->size;
+  }
+  else {
+    if ((n_bytes % page_size) != 0) {
+      n = n_bytes + page_size - (n_bytes % page_size);
     }
-    wbytes -= blocksize;
+    else {
+      n = n_bytes;
+    }
+  }
 
+  for (addr = 0; addr < n; addr += block_size) {
+    report_progress (addr, n_bytes, NULL);
+
+    if (addr + page_size > n_bytes) {
+	   block_size = n_bytes % page_size;
+	}
+	else {
+	   block_size = page_size;
+	}
+  
     /* Only skip on empty page if programming flash. */
     if (flash) {
-      if (usbasp_is_page_empty(buffer, blocksize)) {
-          buffer += blocksize;
-          address += blocksize;
-          report_progress (address, n_bytes, NULL);
+      if (usbasp_is_page_empty(&buffer[addr], block_size)) {
           continue;
       }
     }
@@ -730,34 +742,28 @@ static int usbasp_spi_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
       they use address from this command */
     unsigned char temp[4];
     memset(temp, 0, sizeof(temp));
-    cmd[0] = address & 0xFF;
-    cmd[1] = address >> 8;
-    cmd[2] = address >> 16;
-    cmd[3] = address >> 24;
+    cmd[0] = addr & 0xFF;
+    cmd[1] = addr >> 8;
+    cmd[2] = addr >> 16;
+    cmd[3] = addr >> 24;
     usbasp_transmit(pgm, 1, USBASP_FUNC_SETLONGADDRESS, cmd, temp, sizeof(temp));
 
     /* normal command - firmware what support newmode - use address from previous command,
       firmware what doesn't support newmode - ignore previous command and use address from this command */
 
-    cmd[0] = address & 0xFF;
-    cmd[1] = address >> 8;
+    cmd[0] = addr & 0xFF;
+    cmd[1] = addr >> 8;
     cmd[2] = page_size & 0xFF;
     cmd[3] = (blockflags & 0x0F) + ((page_size & 0xF00) >> 4); //TP: Mega128 fix
     blockflags = 0;
 
-    n = usbasp_transmit(pgm, 0, function, cmd, buffer, blocksize);
+    written = usbasp_transmit(pgm, 0, function, cmd, &buffer[addr], block_size);
 
-    if (n != blocksize) {
+    if (written != block_size) {
       fprintf(stderr, "%s: error: wrong count at writing %x\n",
-	      progname, n);
+	      progname, written);
       return -3;        
     }
-
-
-    buffer += blocksize;
-    address += blocksize;
-
-    report_progress (address, n_bytes, NULL);
   }
 
   return n_bytes;
