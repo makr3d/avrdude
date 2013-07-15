@@ -622,6 +622,7 @@ static int usbasp_spi_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
   int blocksize;
   unsigned char * buffer = m->buf;
   int function;
+  int flash;
 
   if (strcmp(m->desc, "flash") == 0) {
     function = USBASP_FUNC_READFLASH;
@@ -643,6 +644,16 @@ static int usbasp_spi_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
       blocksize = wbytes;
     }
     wbytes -= blocksize;
+
+    /* Only skip on empty page if verify flash. */
+    if (function == USBASP_FUNC_READFLASH) {
+      if (usbasp_is_page_empty(buffer, blocksize)) {
+          buffer += blocksize;
+          address += blocksize;
+          report_progress (address, n_bytes, NULL);
+          continue;
+      }
+    }
 
     /* set address (new mode) - if firmware on usbasp support newmode, then they use address from this command */
     unsigned char temp[4];
