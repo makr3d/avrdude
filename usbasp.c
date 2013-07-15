@@ -141,6 +141,7 @@ static void usbasp_enable(PROGRAMMER * pgm);
 static void usbasp_display(PROGRAMMER * pgm, const char * p);
 // universal functions
 static int usbasp_initialize(PROGRAMMER * pgm, AVRPART * p);
+static int usbasp_is_page_empty(const unsigned char *buf, int page_size);
 // SPI specific functions
 static int usbasp_spi_cmd(PROGRAMMER * pgm, unsigned char cmd[4], unsigned char res[4]);
 static int usbasp_spi_program_enable(PROGRAMMER * pgm, AVRPART * p);
@@ -538,6 +539,21 @@ static int usbasp_initialize(PROGRAMMER * pgm, AVRPART * p)
   return pgm->program_enable(pgm, p);
 }
 
+
+static int usbasp_is_page_empty(const unsigned char *buf, int page_size)
+{
+    int i;
+    for(i = 0; i < page_size; i++) {
+        if(buf[i] != 0xFF) {
+            /* Page is not empty. */
+            return(0);
+        }
+    }
+    
+    /* Page is empty. */
+    return(1);
+}
+
 /* SPI specific functions */
 static int usbasp_spi_cmd(PROGRAMMER * pgm, unsigned char cmd[4],
                    unsigned char res[4])
@@ -673,11 +689,14 @@ static int usbasp_spi_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
   unsigned char * buffer = m->buf;
   unsigned char blockflags = USBASP_BLOCKFLAG_FIRST;
   int function;
+  int flash;
 
   if (strcmp(m->desc, "flash") == 0) {
     function = USBASP_FUNC_WRITEFLASH;
+    flash = 1;
   } else if (strcmp(m->desc, "eeprom") == 0) {
     function = USBASP_FUNC_WRITEEEPROM;
+    flash = 0;
   } else {
     return -2;
   }
@@ -697,6 +716,15 @@ static int usbasp_spi_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
     }
     wbytes -= blocksize;
 
+    /* Only skip on empty page if programming flash. */
+    if (flash) {
+      if (usbasp_is_page_empty(buffer, blocksize)) {
+          buffer += blocksize;
+          address += blocksize;
+          report_progress (address, n_bytes, NULL);
+          continue;
+      }
+    }
 
     /* set address (new mode) - if firmware on usbasp support newmode, then
       they use address from this command */
